@@ -1,6 +1,6 @@
-===================================================
-ERPpeek, a versatile tool for browsing OpenERP data
-===================================================
+==========================================================
+ERPpeek, a versatile tool for browsing Odoo / OpenERP data
+==========================================================
 
 Download and install the latest release::
 
@@ -28,9 +28,9 @@ Key features:
 - single executable ``erppeek.py``, no external dependency
 - wrappers for ``search+read``, for data model introspection, etc...
 - simpler syntax for ``domain`` and ``fields``
-- full API accessible on the ``Client`` object for OpenERP 5.0 through 7.0
+- full API accessible on the ``Client`` object for OpenERP 5.0 through Odoo 8.0
 - the module can be imported and used as a library: ``from erppeek import Client``
-- supports Python 3 and Python 2 (>= 2.5)
+- supports Python 3 and Python 2 (>= 2.6)
 
 
 
@@ -39,17 +39,17 @@ Key features:
 Command line arguments
 ----------------------
 
-There are few arguments to query OpenERP models from the command line.
+There are few arguments to query Odoo models from the command line.
 Although it is quite limited::
 
     $ erppeek --help
     Usage: erppeek [options] [search_term_or_id [search_term_or_id ...]]
 
-    Inspect data on OpenERP objects.  Use interactively or query a model (-m)
+    Inspect data on Odoo objects.  Use interactively or query a model (-m)
     and pass search terms or ids as positional parameters after the options.
 
     Options:
-      --version             show program\'s version number and exit
+      --version             show program's version number and exit
       -h, --help            show this help message and exit
       -l, --list            list sections of the configuration
       --env=ENV             read connection settings from the given section
@@ -72,20 +72,22 @@ Although it is quite limited::
 Example::
 
     $ erppeek -d demo -m res.partner -f name -f lang 1
-    [{'id': 1, 'lang': 'en_US', 'name': 'Your Company'}]
+    "name","lang"
+    "Your Company","en_US"
 
 ::
 
     $ erppeek -d demo -m res.groups -f full_name 'id > 0'
-    [{'full_name': 'Administration / Access Rights', 'id': 1},
-     {'full_name': 'Administration / Configuration', 'id': 2},
-     {'full_name': 'Human Resources / Employee', 'id': 3},
-     {'full_name': 'Usability / Multi Companies', 'id': 4},
-     {'full_name': 'Usability / Extended View', 'id': 5},
-     {'full_name': 'Usability / Technical Features', 'id': 6},
-     {'full_name': 'Sales Management / User', 'id': 7},
-     {'full_name': 'Sales Management / Manager', 'id': 8},
-     {'full_name': 'Partner Manager', 'id': 9}]
+    "full_name"
+    "Administration / Access Rights"
+    "Administration / Configuration"
+    "Human Resources / Employee"
+    "Usability / Multi Companies"
+    "Usability / Extended View"
+    "Usability / Technical Features"
+    "Sales Management / User"
+    "Sales Management / Manager"
+    "Partner Manager"
 
 
 
@@ -112,7 +114,7 @@ Edit ``erppeek.ini`` and declare the environment(s)::
     scheme = local
 
 
-Connect to the OpenERP server::
+Connect to the Odoo server::
 
     erppeek --list
     erppeek --env demo
@@ -122,11 +124,9 @@ This is a sample session::
 
     >>> model('res.users')
     <Model 'res.users'>
-    >>> client.ResUsers is model('res.users')
-    True
-    >>> client.ResUsers.count()
+    >>> model('res.users').count()
     4
-    >>> read('ir.cron', ['active = False'], 'active function')
+    >>> model('ir.cron').read(['active = False'], 'active function')
     [{'active': False, 'function': 'run_mail_scheduler', 'id': 1},
      {'active': False, 'function': 'run_bdr_scheduler', 'id': 2},
      {'active': False, 'function': 'scheduled_fetch_new_scans', 'id': 9}]
@@ -143,8 +143,16 @@ This is a sample session::
       ...
     >>> #
 
+
 .. note::
 
    Use the ``--verbose`` switch to see what happens behind the scene.
    Lines are truncated at 79 chars.  Use ``-vv`` or ``-vvv`` to print
    more.
+
+
+.. note::
+
+   To preserve the history of commands when closing the session, first
+   create an empty file in your home directory:
+   ``touch ~/.erppeek_history``

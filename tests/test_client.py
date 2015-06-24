@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import with_statement
-
 import mock
 from mock import call, sentinel, ANY
 
@@ -8,7 +6,7 @@ import erppeek
 from ._common import XmlRpcTestCase, OBJ
 
 AUTH = sentinel.AUTH
-ID1, ID2 = sentinel.ID1, sentinel.ID2
+ID1, ID2 = 4001, 4002
 
 
 class IdentDict(object):
@@ -19,7 +17,7 @@ class IdentDict(object):
         return 'IdentDict(%s)' % (self._id,)
 
     def __getitem__(self, key):
-        return (key == 'id') and self._id or ('v_' + key)
+        return (key == 'id') and self._id or ('v_%s_%s' % (key, self._id))
 
     def __eq__(self, other):
         return self._id == other._id
@@ -59,7 +57,7 @@ class TestService(XmlRpcTestCase):
         self.assertCalls(call('login', ('aaa',)), 'call().__str__')
         self.assertOutput('')
 
-    def test_service_openerp_client(self, server_version='6.1'):
+    def test_service_openerp_client(self, server_version='8.0'):
         server = 'http://127.0.0.1:8069'
         self.service.side_effect = [server_version, ['newdb'], 1]
         client = erppeek.Client(server, 'newdb', 'usr', 'pss')
@@ -69,26 +67,30 @@ class TestService(XmlRpcTestCase):
         self.assertIsInstance(client.common, erppeek.Service)
         self.assertIsInstance(client._object, erppeek.Service)
         self.assertIsInstance(client._report, erppeek.Service)
-        if server_version == '7.0':
+        if server_version >= '7.0':
             self.assertNotIsInstance(client._wizard, erppeek.Service)
         else:
             self.assertIsInstance(client._wizard, erppeek.Service)
 
-        self.assertIn('/xmlrpc/db', str(client.db.create))
-        if server_version == '5.0':
+        self.assertIn('/xmlrpc/db', str(client.db.create_database))
+        self.assertIn('/xmlrpc/db', str(client.db.db_exist))
+        if server_version == '8.0':
             self.assertRaises(AttributeError, getattr,
-                              client.db, 'create_database')
+                              client.db, 'create')
             self.assertRaises(AttributeError, getattr,
-                              client.db, 'db_exist')
+                              client.db, 'get_progress')
         else:
-            self.assertIn('/xmlrpc/db', str(client.db.create_database))
-            self.assertIn('/xmlrpc/db', str(client.db.db_exist))
+            self.assertIn('/xmlrpc/db', str(client.db.create))
+            self.assertIn('/xmlrpc/db', str(client.db.get_progress))
 
         self.assertCalls(ANY, ANY, ANY)
         self.assertOutput('')
 
     def test_service_openerp_50(self):
         self.test_service_openerp_client(server_version='5.0')
+
+    def test_service_openerp_61(self):
+        self.test_service_openerp_client(server_version='6.1')
 
     def test_service_openerp_70(self):
         self.test_service_openerp_client(server_version='7.0')
@@ -126,14 +128,23 @@ class TestCreateClient(XmlRpcTestCase):
         getpass = mock.patch('getpass.getpass',
                              return_value='password').start()
         self.service.db.list.return_value = ['database']
-
-        client = erppeek.Client('http://127.0.0.1:8069', 'database', 'usr')
         expected_calls = self.startup_calls + (
             ('common.login', 'database', 'usr', 'password'),)
+
+        # A: Invalid login
+        self.assertRaises(erppeek.Error, erppeek.Client,
+                          'http://127.0.0.1:8069', 'database', 'usr')
+        self.assertCalls(*expected_calls)
+        self.assertEqual(getpass.call_count, 1)
+
+        # B: Valid login
+        self.service.common.login.return_value = 17
+        getpass.reset_mock()
+
+        client = erppeek.Client('http://127.0.0.1:8069', 'database', 'usr')
         self.assertIsInstance(client, erppeek.Client)
         self.assertCalls(*expected_calls)
         self.assertEqual(getpass.call_count, 1)
-        self.assertOutput('Error: Invalid username or password\n')
 
     def test_create_with_cache(self):
         self.service.db.list.return_value = ['database']
@@ -156,15 +167,32 @@ class TestCreateClient(XmlRpcTestCase):
         getpass = mock.patch('getpass.getpass',
                              return_value='password').start()
         self.service.db.list.return_value = ['database']
-
-        client = erppeek.Client.from_config('test')
         expected_calls = self.startup_calls + (
             ('common.login', 'database', 'usr', 'password'),)
+
+        # A: Invalid login
+        self.assertRaises(erppeek.Error, erppeek.Client.from_config, 'test')
+        self.assertCalls(*expected_calls)
+        self.assertEqual(read_config.call_count, 1)
+        self.assertEqual(getpass.call_count, 1)
+
+        # B: Valid login
+        self.service.common.login.return_value = 17
+        read_config.reset_mock()
+        getpass.reset_mock()
+
+        client = erppeek.Client.from_config('test')
         self.assertIsInstance(client, erppeek.Client)
         self.assertCalls(*expected_calls)
         self.assertEqual(read_config.call_count, 1)
         self.assertEqual(getpass.call_count, 1)
-        self.assertOutput('Error: Invalid username or password\n')
+
+    def test_create_invalid(self):
+        # Without mock
+        self.service.stop()
+
+        self.assertRaises(EnvironmentError, erppeek.Client, 'dsadas')
+        self.assertOutput('')
 
 
 class TestSampleSession(XmlRpcTestCase):
@@ -269,29 +297,23 @@ class TestClientApi(XmlRpcTestCase):
         if args[4] == 'search':
             return [ID2, ID1]
         if args[4] == 'read':
-            return [DIC1, DIC2]
+            return [IdentDict(res_id) for res_id in args[5][::-1]]
         return sentinel.OTHER
 
     def test_create_database(self):
         create_database = self.client.create_database
-        mock.patch('time.sleep').start()
-        self.client.db.create.return_value = ID1
-        self.client.db.get_progress.return_value = \
-            [1, [{'login': 'LL', 'password': 'PP'}]]
         self.client.db.list.side_effect = [['db1'], ['db2']]
 
         create_database('abc', 'db1')
         create_database('xyz', 'db2', user_password='secret', lang='fr_FR')
 
         self.assertCalls(
-            call.db.create('abc', 'db1', False, 'en_US', 'admin'),
-            call.db.get_progress('abc', ID1),
+            call.db.create_database('abc', 'db1', False, 'en_US', 'admin'),
             call.db.list(),
-            call.common.login('db1', 'LL', 'PP'),
-            call.db.create('xyz', 'db2', False, 'fr_FR', 'secret'),
-            call.db.get_progress('xyz', ID1),
+            call.common.login('db1', 'admin', 'admin'),
+            call.db.create_database('xyz', 'db2', False, 'fr_FR', 'secret'),
             call.db.list(),
-            call.common.login('db2', 'LL', 'PP'),
+            call.common.login('db2', 'admin', 'secret'),
         )
         self.assertOutput('')
 
@@ -326,11 +348,9 @@ class TestClientApi(XmlRpcTestCase):
         )
         self.assertOutput('')
 
-        warn = mock.patch('warnings.warn').start()
+        # No longer supported since 1.6
         search('foo.bar', 'name like Morice')
-        self.assertCalls(OBJ('foo.bar', 'search', domain))
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
+        self.assertCalls(OBJ('foo.bar', 'search', 'name like Morice'))
 
         search('foo.bar', ['name like Morice'], missingkey=42)
         self.assertCalls(OBJ('foo.bar', 'search', domain, 0, None, None, None))
@@ -366,11 +386,9 @@ class TestClientApi(XmlRpcTestCase):
         )
         self.assertOutput('')
 
-        warn = mock.patch('warnings.warn').start()
+        # No longer supported since 1.6
         count('foo.bar', 'name like Morice')
-        self.assertCalls(OBJ('foo.bar', 'search_count', domain))
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
+        self.assertCalls(OBJ('foo.bar', 'search_count', 'name like Morice'))
 
         self.assertRaises(TypeError, count)
         self.assertRaises(TypeError, count,
@@ -387,24 +405,25 @@ class TestClientApi(XmlRpcTestCase):
         self.assertCalls()
         self.assertOutput('')
 
-    def test_read(self):
+    def test_read_simple(self):
         read = self.client.read
         self.service.object.execute.side_effect = self.obj_exec
-
-        def call_read(fields=None):
-            return OBJ('foo.bar', 'read', [ID2, ID1], fields)
 
         read('foo.bar', 42)
         read('foo.bar', [42])
         read('foo.bar', [13, 17])
         read('foo.bar', [42], 'first_name')
         self.assertCalls(
-            OBJ('foo.bar', 'read', 42, None),
+            OBJ('foo.bar', 'read', [42], None),
             OBJ('foo.bar', 'read', [42], None),
             OBJ('foo.bar', 'read', [13, 17], None),
             OBJ('foo.bar', 'read', [42], ['first_name']),
         )
         self.assertOutput('')
+
+    def test_read_complex(self):
+        read = self.client.read
+        self.service.object.execute.side_effect = self.obj_exec
 
         searchterm = 'name like Morice'
         self.assertEqual(read('foo.bar', [searchterm]), [DIC1, DIC2])
@@ -423,8 +442,11 @@ class TestClientApi(XmlRpcTestCase):
 
         rv = read('foo.bar', ['name like Morice'],
                   'aaa %(birthdate)s bbb %(city)s', offset=80, limit=99)
-        self.assertEqual(rv, ['aaa v_birthdate bbb v_city'] * 2)
+        self.assertEqual(rv, ['aaa v_birthdate_4001 bbb v_city_4001',
+                              'aaa v_birthdate_4002 bbb v_city_4002'])
 
+        def call_read(fields=None):
+            return OBJ('foo.bar', 'read', [ID2, ID1], fields)
         domain = [('name', 'like', 'Morice')]
         domain2 = [('name', '=', 'mushroom'), ('state', '!=', 'draft')]
         self.assertCalls(
@@ -448,15 +470,60 @@ class TestClientApi(XmlRpcTestCase):
         )
         self.assertOutput('')
 
-        warn = mock.patch('warnings.warn').start()
+    def test_read_false(self):
+        read = self.client.read
+        self.service.object.execute.side_effect = self.obj_exec
+
+        self.assertEqual(read('foo.bar', False), False)
+
+        self.assertEqual(read('foo.bar', [False]), [])
+        self.assertEqual(read('foo.bar', [False, False]), [])
+        self.assertEqual(read('foo.bar', [False], 'first_name'), [])
+        self.assertEqual(read('foo.bar', [False], order=True),
+                         [False])
+        self.assertEqual(read('foo.bar', [False, False], order=True),
+                         [False, False])
+        self.assertEqual(read('foo.bar', [False], 'first_name', order=True),
+                         [False])
+
+        self.assertCalls()
+
+        self.assertEqual(read('foo.bar', [False, 42]), [IdentDict(42)])
+        self.assertEqual(read('foo.bar', [False, 13, 17, False]),
+                         [IdentDict(17), IdentDict(13)])
+        self.assertEqual(read('foo.bar', [13, False, 17], 'first_name'),
+                         ['v_first_name_17', 'v_first_name_13'])
+        self.assertEqual(read('foo.bar', [False, 42], order=True),
+                         [False, IdentDict(42)])
+        self.assertEqual(read('foo.bar', [False, 13, 17, False], order=True),
+                         [False, IdentDict(13), IdentDict(17), False])
+        self.assertEqual(read('foo.bar', [13, False, 17], 'city', order=True),
+                         ['v_city_13', False, 'v_city_17'])
+
+        self.assertCalls(
+            OBJ('foo.bar', 'read', [42], None),
+            OBJ('foo.bar', 'read', [13, 17], None),
+            OBJ('foo.bar', 'read', [13, 17], ['first_name']),
+            OBJ('foo.bar', 'read', [42], None),
+            OBJ('foo.bar', 'read', [13, 17], None),
+            OBJ('foo.bar', 'read', [13, 17], ['city']),
+        )
+        self.assertOutput('')
+
+    def test_read_invalid(self):
+        read = self.client.read
+        self.service.object.execute.side_effect = self.obj_exec
+        domain = [('name', 'like', 'Morice')]
+
+        # No longer supported since 1.6
         read('foo.bar', 'name like Morice')
-        self.assertCalls(OBJ('foo.bar', 'search', domain), call_read())
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
 
         read('foo.bar', ['name like Morice'], missingkey=42)
-        self.assertCalls(OBJ('foo.bar', 'search', domain, 0, None, None, None),
-                         call_read())
+
+        self.assertCalls(
+            OBJ('foo.bar', 'read', ['name like Morice'], None),
+            OBJ('foo.bar', 'search', domain, 0, None, None, None),
+            OBJ('foo.bar', 'read', ANY, None))
         self.assertOutput('Ignoring: missingkey = 42\n')
 
         self.assertRaises(TypeError, read)
@@ -506,12 +573,11 @@ class TestClientApi(XmlRpcTestCase):
         )
         self.assertOutput('')
 
-        self.assertIsNone(self.client.model('foo.bar'))
+        self.assertRaises(erppeek.Error, self.client.model, 'foo.bar')
         self.assertCalls(
             OBJ('ir.model', 'search', [('model', 'like', 'foo.bar')]),
             OBJ('ir.model', 'read', [ID2, ID1], ('model',)),
         )
-        self.assertIn('Model not found', self.stdout.popvalue())
         self.assertOutput('')
 
         self.service.object.execute.side_effect = [
@@ -676,6 +742,29 @@ class TestClientApi50(TestClientApi):
         # raise self.skipTest('Not supported with OpenERP 5')
         pass
     test_execute_kw = test_render_report = _skip
+
+    def test_create_database(self):
+        create_database = self.client.create_database
+        mock.patch('time.sleep').start()
+        self.client.db.create.return_value = ID1
+        self.client.db.get_progress.return_value = \
+            [1, [{'login': 'admin', 'password': 'PP'}]]
+        self.client.db.list.side_effect = [['db1'], ['db2']]
+
+        create_database('abc', 'db1')
+        create_database('xyz', 'db2', user_password='secret', lang='fr_FR')
+
+        self.assertCalls(
+            call.db.create('abc', 'db1', False, 'en_US', 'admin'),
+            call.db.get_progress('abc', ID1),
+            call.db.list(),
+            call.common.login('db1', 'admin', 'admin'),
+            call.db.create('xyz', 'db2', False, 'fr_FR', 'secret'),
+            call.db.get_progress('xyz', ID1),
+            call.db.list(),
+            call.common.login('db2', 'admin', 'secret'),
+        )
+        self.assertOutput('')
 
     def _module_upgrade(self, button='upgrade'):
         self.service.object.execute.side_effect = [

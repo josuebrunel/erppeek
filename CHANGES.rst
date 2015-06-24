@@ -2,6 +2,157 @@ Changelog
 ---------
 
 
+1.x (unreleased)
+~~~~~~~~~~~~~~~~
+
+* Do not hang when the ``Client`` constructor receives invalid
+  arguments.
+
+
+1.6.1 (2014-11-12)
+~~~~~~~~~~~~~~~~~~
+
+* Support using ``--env`` and ``--user`` together to connect with a
+  different user.
+
+* Adapt for Odoo 8.0 after change ``cc4fba6`` on October 2014.
+
+* Do not interpret digits with leading ``0`` as octal in search domain.
+
+
+1.6 (2014-09-23)
+~~~~~~~~~~~~~~~~
+
+* Compatible with Odoo 8.0.
+
+* New attribute ``Client.context`` to set the default context for
+  high-level ``Model`` and ``Record`` methods.
+
+* Use blocking RPC call in ``Client.create_database``.  Asynchronous
+  method is removed in Odoo.
+
+* Return the interactive namespace with ``main(interact=False)``.
+  It helps to integrate with third-party libraries, such as IPython.
+
+* Remove a duplicate ``Logged in as ...`` line in interactive mode.
+
+* Remove the ``search+name_get`` undocumented feature which has
+  wrong behavior when applied to an empty ``RecordList``.
+
+* Do not prevent login if access to ``Client.db.list()`` is denied.
+
+
+1.6b1 (2014-06-09)
+~~~~~~~~~~~~~~~~~~
+
+* When a function or a method fails, raise an ``erppeek.Error`` instead
+  of printing a message and returning ``None``.
+
+* Switch to local mode when the command line argument points at the
+  server configuration, like ``-c path/to/openerp-server.conf``.
+
+* Local mode compatible with Odoo trunk: support both the old and the
+  new API.
+
+* Use shell-like parsing for ``options =`` setting in local mode.
+
+* Function ``start_openerp_services`` is replaced with
+  ``start_odoo_services``: it is still compatible with OpenERP 6.1 and 7
+  and it accepts a list of options in the first argument, similar to
+  ``sys.argv[1:]``.
+
+* Search domains require square brackets.  Usage without square brackets
+  was deprecated since 0.5, with ``UserWarning`` alerts.
+
+* Implement addition of ``RecordList`` of the same model.
+
+* Drop compatibility with Python 2.5.
+
+
+1.5.3 (2014-05-26)
+~~~~~~~~~~~~~~~~~~
+
+* Change command line output to CSV format.
+
+* Translate command line output according to LANG environment variable.
+
+* Pretty print the list of modules.
+
+* Do not report ``Module(s) not found`` when trying to install a
+  module already installed.
+
+
+1.5.2 (2014-04-12)
+~~~~~~~~~~~~~~~~~~
+
+* Return an appropriate error message when the client is not connected.
+
+* Two similar ``Record`` from different connections do not compare equal.
+
+* Set the ``PGAPPNAME`` used for the PostgreSQL connection, in local mode.
+
+* Close PostgreSQL connections on exit, in local mode.
+
+* Implement the context manager protocol.
+
+
+1.5.1 (2014-03-11)
+~~~~~~~~~~~~~~~~~~
+
+* When switching to a different environment, with ``Client.connect``,
+  invalidate the previous connection to avoid mistakes (interactive mode).
+
+* Avoid cluttering the globals in interactive mode.
+
+* Close socket to avoid ``ResourceWarning`` on Python 3.
+
+* The ``get_pool`` helper is only available in interactive mode and if
+  the client is connected locally using the ``openerp`` package.
+
+* Clear the last exception before entering interactive mode, only needed
+  on Python 2.
+
+* Fix the ``searchargs`` domain parser for compatibility with Python 3.4.
+
+
+1.5 (2014-03-10)
+~~~~~~~~~~~~~~~~
+
+* Advertize the ``Model`` and ``Record`` paradigm in the ``usage`` printed
+  in interactive mode: it's far more easier to use, and available since 1.0.
+
+* In interactive mode, only inject four global names: ``client``, ``models``,
+  ``model`` and ``do``.  Other methods are available on ``Model``
+  and ``Client`` instances (``read`` ``search`` ``count`` ``keys`` ``fields``
+  ``access`` ...).
+
+* Always clear the ``Record`` cache when an arbitrary method is called on
+  this ``Record``.
+
+* Implement ``==`` comparison for ``Record`` instances.
+
+* New computed attributes ``Record._external_id`` and
+  ``RecordList._external_id``, and new method
+  ``Model._get_external_ids(ids=None)``.
+
+* Better parsing of dates in search terms.
+
+* Reject invalid ``==`` operator in search terms.
+
+* Now the ``str(...)`` of a ``Record`` is always retrieved with ``name_get``.
+  Previously, the output was sometimes inconsistent.
+
+* Fix ``TypeError`` when browsing duplicate ids.
+
+* Fix error with ``Model.get(['field = value'], context={...})``.
+
+* Workaround an issue with some models: always pass a list of ids
+  to ``read``.
+
+* Test the behaviour when ``read`` is called with a ``False`` id: it happens
+  when browsing a ``RecordList`` for example.
+
+
 1.4.5 (2013-03-20)
 ~~~~~~~~~~~~~~~~~~
 

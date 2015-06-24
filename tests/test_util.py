@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-from __future__ import with_statement
-
 import unittest2
-import mock
 
 from erppeek import issearchdomain, searchargs
 
@@ -20,8 +17,10 @@ class TestUtils(unittest2.TestCase):
                                         ('state', '!=', 'draft')]))
         self.assertTrue(issearchdomain(['name = mushroom', 'state != draft']))
         self.assertTrue(issearchdomain([]))
-        self.assertTrue(issearchdomain('state != draft'))
-        self.assertTrue(issearchdomain(('state', '!=', 'draft')))
+
+        # Removed with 1.6
+        self.assertFalse(issearchdomain('state != draft'))
+        self.assertFalse(issearchdomain(('state', '!=', 'draft')))
 
     def test_searchargs(self):
         domain = [('name', '=', 'mushroom'), ('state', '!=', 'draft')]
@@ -30,17 +29,6 @@ class TestUtils(unittest2.TestCase):
         self.assertEqual(searchargs((domain,)), (domain,))
         self.assertEqual(searchargs((['name = mushroom', 'state != draft'],)),
                          (domain,))
-
-        with mock.patch('warnings.warn') as mock_warn:
-            self.assertEqual(searchargs(('state != draft',)),
-                             ([('state', '!=', 'draft')],))
-            mock_warn.assert_called_once_with(
-                "Domain should be a list: ['state != draft']")
-            mock_warn.reset_mock()
-            self.assertEqual(searchargs((('state', '!=', 'draft'),)),
-                             ([('state', '!=', 'draft')],))
-            mock_warn.assert_called_once_with(
-                "Domain should be a list: [('state', '!=', 'draft')]")
 
         self.assertEqual(searchargs((['status=Running'],)),
                          ([('status', '=', 'Running')],))
@@ -70,6 +58,44 @@ class TestUtils(unittest2.TestCase):
                          ([('status', '=?', 'Running')],))
         self.assertEqual(searchargs((['status=?Running'],)),
                          ([('status', '=?', 'Running')],))
+
+    def test_searchargs_date(self):
+        # Do not interpret dates as integers
+        self.assertEqual(searchargs((['create_date > "2001-12-31"'],)),
+                         ([('create_date', '>', '2001-12-31')],))
+        self.assertEqual(searchargs((['create_date > 2001-12-31'],)),
+                         ([('create_date', '>', '2001-12-31')],))
+
+        self.assertEqual(searchargs((['create_date > 2001-12-31 23:59:00'],)),
+                         ([('create_date', '>', '2001-12-31 23:59:00')],))
+
+        # Not a date, but it should be parsed as string too
+        self.assertEqual(searchargs((['port_nr != 122-2'],)),
+                         ([('port_nr', '!=', '122-2')],))
+
+    def test_searchargs_digits(self):
+        # Do not convert digits to octal
+        self.assertEqual(searchargs((['code = 042'],)), ([('code', '=', '042')],))
+        self.assertEqual(searchargs((['code > 042'],)), ([('code', '>', '042')],))
+        self.assertEqual(searchargs((['code > 420'],)), ([('code', '>', 420)],))
+
+        # Standard octal notation is supported
+        self.assertEqual(searchargs((['code = 0o42'],)), ([('code', '=', 34)],))
+
+        # Other numeric literals are still supported
+        self.assertEqual(searchargs((['duration = 0'],)), ([('duration', '=', 0)],))
+        self.assertEqual(searchargs((['price < 0.42'],)), ([('price', '<', 0.42)],))
+
+    def test_searchargs_invalid(self):
+
+        # No longer recognized as a search domain, since 1.6
+        self.assertEqual(searchargs(('state != draft',)), ('state != draft',))
+        self.assertEqual(searchargs((('state', '!=', 'draft'),)),
+                         (('state', '!=', 'draft'),))
+
+        # Operator == is a typo
+        self.assertRaises(ValueError, searchargs, (['ham==2'],))
+        self.assertRaises(ValueError, searchargs, (['ham == 2'],))
 
         self.assertRaises(ValueError, searchargs, (['spam.hamin(1, 2)'],))
         self.assertRaises(ValueError, searchargs, (['spam.hamin (1, 2)'],))

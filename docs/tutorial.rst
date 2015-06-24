@@ -6,7 +6,7 @@ Tutorial
 
 This tutorial demonstrates some features of ERPpeek in the interactive shell.
 
-It assumes an OpenERP server is installed.
+It assumes an Odoo or OpenERP server is installed.
 The shell is a true Python shell.  We have access to all the features and
 modules of the Python interpreter.
 
@@ -18,7 +18,7 @@ modules of the Python interpreter.
 First connection
 ----------------
 
-The server is freshly installed and does not have an OpenERP database yet.
+The server is freshly installed and does not have an Odoo database yet.
 The tutorial creates its own database ``demo`` to play with.
 
 Open the ERPpeek shell::
@@ -38,28 +38,20 @@ On login, it prints few lines about the commands available.
 .. sourcecode:: pycon
 
     $ erppeek
-    Usage (main commands):
-        search(obj, domain)
-        search(obj, domain, offset=0, limit=None, order=None)
-                                        # Return a list of IDs
-        count(obj, domain)              # Count the matching objects
-
-        read(obj, ids, fields=None)
-        read(obj, domain, fields=None)
-        read(obj, domain, fields=None, offset=0, limit=None, order=None)
-                                        # Return values for the fields
-
+    Usage (some commands):
         models(name)                    # List models matching pattern
         model(name)                     # Return a Model instance
-        keys(obj)                       # List field names of the model
-        fields(obj, names=None)         # Return details for the fields
-        field(obj, name)                # Return details for the field
-        access(obj, mode='read')        # Check access on the model
+        model(name).keys()              # List field names of the model
+        model(name).fields(names=None)  # Return details for the fields
+        model(name).field(name)         # Return details for the field
+        model(name).browse(domain)
+        model(name).browse(domain, offset=0, limit=None, order=None)
+                                        # Return a RecordList
 
-        do(obj, method, *params)        # Generic 'object.execute'
-        exec_workflow(obj, signal, id)  # Trigger workflow signal
+        rec = model(name).get(domain)   # Get the Record matching domain
+        rec.some_field                  # Return the value of this field
+        rec.read(fields=None)           # Return values for the fields
 
-        client                          # Client object, connected
         client.login(user)              # Login with another user
         client.connect(env)             # Connect to another env.
         client.modules(name)            # List modules matching pattern
@@ -143,28 +135,22 @@ Where is the table for the users?
     <Client 'http://localhost:8069#demo'>
     >>> models('user')
     {'ResUsers': <Model 'res.users'>, 'ResWidgetUser': <Model 'res.widget.user'>}
-    >>> client.ResUsers
-    <Model 'res.users'>
 
-We can reach the same model using the :meth:`~Client.model` method too.
+We've listed two models which matches the name, ``res.users`` and
+``res.widget.user``.  We reach the users' model using the :meth:`~Client.model`
+method and we want to introspect its fields.
+Fortunately, the :class:`Model` class provides methods to retrieve all
+the details.
 
 .. sourcecode:: pycon
 
     >>> model('res.users')
     <Model 'res.users'>
-    >>> model('res.users') is client.ResUsers
-    True
-
-But we don't know anything about the fields of this model.
-Fortunately, the :class:`Model` class provides methods to introspect the model.
-
-.. sourcecode:: pycon
-
-    >>> print(client.ResUsers.keys())
+    >>> print(model('res.users').keys())
     ['action_id', 'active', 'company_id', 'company_ids', 'context_lang',
      'context_tz', 'date', 'groups_id', 'id', 'login', 'menu_id', 'menu_tips',
      'name', 'new_password', 'password', 'signature', 'user_email', 'view']
-    >>> client.ResUsers.field('view')
+    >>> model('res.users').field('view')
     {'digits': [16, 2],
      'fnct_inv': '_set_interface_type',
      'fnct_inv_arg': False,
@@ -186,9 +172,9 @@ Let's examine the ``'admin'`` user in details.
 
 .. sourcecode:: pycon
 
-    >>> client.ResUsers.count()
+    >>> model('res.users').count()
     1
-    >>> admin_user = client.ResUsers.browse(1)
+    >>> admin_user = model('res.users').browse(1)
     >>> admin_user.groups_id
     <RecordList 'res.groups,[1, 2, 3]'>
     >>> admin_user.groups_id.name
@@ -214,7 +200,7 @@ Let's create ``Joe``.
 
 .. sourcecode:: pycon
 
-    >>> client.ResUsers.create({'login': 'joe'})
+    >>> model('res.users').create({'login': 'joe'})
     Fault: Integrity Error
 
     The operation cannot be completed, probably due to the following:
@@ -228,7 +214,7 @@ It seems we've forgotten some mandatory data.  Let's give him a ``name``.
 
 .. sourcecode:: pycon
 
-    >>> client.ResUsers.create({'login': 'joe', 'name': 'Joe'})
+    >>> model('res.users').create({'login': 'joe', 'name': 'Joe'})
     <Record 'res.users,3'>
     >>> joe_user = _
     >>> joe_user.groups_id.full_name
@@ -332,7 +318,8 @@ Among these 92 objects, some of them are ``read-only``, others are
        1  <Model 'res.widget.user'>
     >>> #
     >>> # Show the content of a model
-    >>> model('ir.config_parameter').read([])
+    >>> config_params = model('ir.config_parameter').browse([])
+    >>> config_params.read()
     [{'id': 1, 'key': 'web.base.url', 'value': 'http://localhost:8069'},
      {'id': 2, 'key': 'database.create_date', 'value': '2012-09-01 09:01:12'},
      {'id': 3,
@@ -342,29 +329,20 @@ Among these 92 objects, some of them are ``read-only``, others are
 Browse the records
 ------------------
 
-First, a trick to populate the global namespace with the models you need::
+Query the ``"res.country"`` model::
 
-    >>> globals().update(models('res.'))
-    >>> ResLang
-    <Model 'res.lang'>
-    >>> ResPartner
-    <Model 'res.partner'>
-    >>> #
-
-Query the ``ResCountry`` model::
-
-    >>> ResCountry.keys()
+    >>> model('res.country').keys()
     ['address_format', 'code', 'name']
-    >>> ResCountry.browse(['name like public'])
+    >>> model('res.country').browse(['name like public'])
     <RecordList 'res.country,[41, 42, 57, 62, 116, 144]'>
-    >>> ResCountry.browse(['name like public']).name
+    >>> model('res.country').browse(['name like public']).name
     ['Central African Republic',
      'Congo, Democratic Republic of the',
      'Czech Republic',
      'Dominican Republic',
      'Kyrgyz Republic (Kyrgyzstan)',
      'Macedonia, the former Yugoslav Republic of']
-    >>> ResCountry.browse(['code > Y'], order='code ASC').read('code name')
+    >>> model('res.country').browse(['code > Y'], order='code ASC').read('code name')
     [{'code': 'YE', 'id': 247, 'name': 'Yemen'},
      {'code': 'YT', 'id': 248, 'name': 'Mayotte'},
      {'code': 'YU', 'id': 249, 'name': 'Yugoslavia'},
@@ -375,10 +353,8 @@ Query the ``ResCountry`` model::
     >>> #
 
 ..
-    ResCountry.browse(['code > Y'], order='code ASC').read('%(code)s %(name)s')
+    model('res.country').browse(['code > Y'], order='code ASC').read('%(code)s %(name)s')
 
 ... the tutorial is done.
 
 Jump to the :doc:`api` for further details.
-
-

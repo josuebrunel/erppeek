@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import mock
 from mock import sentinel, ANY
 
 import erppeek
@@ -15,42 +14,67 @@ class TestCase(XmlRpcTestCase):
     uid = 1
 
     def obj_exec(self, *args):
-        if args[4] == 'search':
-            if args[3].startswith('ir.model') and 'foo' in str(args[5]):
+        (model, method) = args[3:5]
+        if method == 'search':
+            domain = args[5]
+            if model.startswith('ir.model') and 'foo' in str(domain):
+                if "'in', []" in str(domain) or 'other_module' in str(domain):
+                    return []
                 return sentinel.FOO
-            if args[5] == [('name', '=', 'Morice')]:
-                return [sentinel.ID3]
-            if 'missing' in str(args[5]):
+            if domain == [('name', '=', 'Morice')]:
+                return [1003]
+            if 'missing' in str(domain):
                 return []
-            return [sentinel.ID1, sentinel.ID2]
-        if args[4] == 'read':
+            return [1001, 1002]
+        if method == 'read':
             if args[5] is sentinel.FOO:
-                if args[3] == 'ir.model.data':
-                    return [{'model': 'foo.bar', 'id': 1733, 'res_id': 42}]
+                if model == 'ir.model.data':
+                    return [{'model': 'foo.bar', 'module': 'this_module',
+                             'name': 'xml_name', 'id': 1733, 'res_id': 42}]
                 return [{'model': 'foo.bar', 'id': 371},
+                        {'model': 'foo.other', 'id': 99},
                         {'model': 'ir.model.data', 'id': 17}]
 
+            # We no longer read single ids
+            self.assertIsInstance(args[5], list)
+
             class IdentDict(dict):
-                def __init__(self, id_):
-                    self._id = id_
+                def __init__(self, id_, fields=()):
                     self['id'] = id_
+                    for f in fields:
+                        self[f] = self[f]
 
                 def __getitem__(self, key):
-                    if key == 'id':
-                        return self._id
+                    if key in self:
+                        return dict.__getitem__(self, key)
                     return 'v_' + key
-            if isinstance(args[5], int):
-                return IdentDict(args[5])
-            return [IdentDict(arg) for arg in args[5]]
-        if args[4] == 'fields_get_keys':
-            return ['id', 'name', 'message']
-        if args[4] == 'fields_get':
-            return dict.fromkeys(('id', 'name', 'message', 'spam'),
-                                 {'type': sentinel.FIELD_TYPE})
-        if args[4] in ('create', 'copy'):
-            return sentinel.OTHER
-        else:
-            return [sentinel.OTHER]
+            if model == 'foo.bar' and args[6] is None:
+                records = {}
+                for res_id in set(args[5]):
+                    rdic = IdentDict(res_id, ('name', 'message', 'spam'))
+                    rdic['misc_id'] = 421
+                    records[res_id] = rdic
+                return [records[res_id] for res_id in args[5]]
+            return [IdentDict(arg, args[6]) for arg in args[5]]
+        if method == 'fields_get_keys':
+            return ['id', 'name', 'message', 'misc_id']
+        if method == 'fields_get':
+            if model == 'ir.model.data':
+                keys = ('id', 'model', 'module', 'name', 'res_id')
+            else:
+                keys = ('id', 'name', 'message', 'spam', 'birthdate', 'city')
+            fields = dict.fromkeys(keys, {'type': sentinel.FIELD_TYPE})
+            fields['misc_id'] = {'type': 'many2one', 'relation': 'foo.misc'}
+            fields['line_ids'] = {'type': 'one2many', 'relation': 'foo.lines'}
+            fields['many_ids'] = {'type': 'many2many', 'relation': 'foo.many'}
+            return fields
+        if method == 'name_get':
+            if 404 in args[5]:
+                1 / 0
+            return [(res_id, 'name_%s' % res_id) for res_id in args[5]]
+        if method in ('create', 'copy'):
+            return 1999
+        return [sentinel.OTHER]
 
     def setUp(self):
         super(TestCase, self).setUp()
@@ -68,10 +92,9 @@ class TestModel(TestCase):
         # Reset cache for this test
         self.client._models.clear()
 
-        self.assertIsNone(self.client.model('mic.mac'))
-        self.assertIsNone(self.client.MicMac)
+        self.assertRaises(erppeek.Error, self.client.model, 'mic.mac')
+        self.assertRaises(erppeek.Error, getattr, self.client, 'MicMac')
         self.assertCalls(ANY, ANY, ANY, ANY)
-        self.assertIn('Model not found', self.stdout.popvalue())
         self.assertOutput('')
 
         self.assertIs(self.client.model('foo.bar'),
@@ -142,12 +165,9 @@ class TestModel(TestCase):
         )
         self.assertOutput('')
 
-        # UserWarning
-        warn = mock.patch('warnings.warn').start()
+        # No longer supported since 1.6
         FooBar.search('name like Morice')
-        self.assertCalls(OBJ('foo.bar', 'search', domain))
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
+        self.assertCalls(OBJ('foo.bar', 'search', 'name like Morice'))
 
         FooBar.search(['name like Morice'], missingkey=42)
         self.assertCalls(OBJ('foo.bar', 'search', domain, 0, None, None, None))
@@ -182,11 +202,9 @@ class TestModel(TestCase):
         )
         self.assertOutput('')
 
-        warn = mock.patch('warnings.warn').start()
+        # No longer supported since 1.6
         FooBar.count(searchterm)
-        self.assertCalls(OBJ('foo.bar', 'search_count', domain))
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
+        self.assertCalls(OBJ('foo.bar', 'search_count', searchterm))
 
         self.assertRaises(TypeError, FooBar.count,
                           [searchterm], limit=2)
@@ -205,14 +223,14 @@ class TestModel(TestCase):
         FooBar = self.model('foo.bar')
 
         def call_read(fields=None):
-            return OBJ('foo.bar', 'read', [sentinel.ID1, sentinel.ID2], fields)
+            return OBJ('foo.bar', 'read', [1001, 1002], fields)
 
         FooBar.read(42)
         FooBar.read([42])
         FooBar.read([13, 17])
         FooBar.read([42], 'first_name')
         self.assertCalls(
-            OBJ('foo.bar', 'read', 42, None),
+            OBJ('foo.bar', 'read', [42], None),
             OBJ('foo.bar', 'read', [42], None),
             OBJ('foo.bar', 'read', [13, 17], None),
             OBJ('foo.bar', 'read', [42], ['first_name']),
@@ -259,11 +277,9 @@ class TestModel(TestCase):
         )
         self.assertOutput('')
 
-        warn = mock.patch('warnings.warn').start()
+        # No longer supported since 1.6
         FooBar.read(searchterm)
-        self.assertCalls(OBJ('foo.bar', 'search', domain), call_read())
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
+        self.assertCalls(OBJ('foo.bar', 'read', [searchterm], None))
 
         FooBar.read([searchterm], missingkey=42)
         self.assertCalls(OBJ('foo.bar', 'search', domain, 0, None, None, None),
@@ -311,11 +327,8 @@ class TestModel(TestCase):
         )
         self.assertOutput('')
 
-        warn = mock.patch('warnings.warn').start()
-        FooBar.browse(searchterm)
-        self.assertCalls(OBJ('foo.bar', 'search', domain))
-        warn.assert_called_once_with(
-            "Domain should be a list: ['name like Morice']")
+        # No longer supported since 1.6
+        self.assertRaises(AssertionError, FooBar.browse, searchterm)
 
         FooBar.browse([searchterm], limit=2, fields=['birthdate', 'city'])
         FooBar.browse([searchterm], missingkey=42)
@@ -346,10 +359,30 @@ class TestModel(TestCase):
         # domain matches too many records (2)
         self.assertRaises(ValueError, FooBar.get, ['name like Morice'])
 
+        # set default context
+        ctx = {'lang': 'en_GB', 'location': 'somewhere'}
+        self.client.context = dict(ctx)
+
+        # with context
+        value = FooBar.get(['name = Morice'], context={'lang': 'fr_FR'})
+        self.assertEqual(type(value), erppeek.Record)
+        self.assertIsInstance(value.name, str)
+
+        # with default context
+        value = FooBar.get(['name = Morice'])
+        self.assertEqual(type(value), erppeek.Record)
+        self.assertIsInstance(value.name, str)
+
         self.assertCalls(
             OBJ('foo.bar', 'search', [('name', '=', 'Morice')]),
             OBJ('foo.bar', 'search', [('name', '=', 'Blinky'), ('missing', '=', False)]),
             OBJ('foo.bar', 'search', [('name', 'like', 'Morice')]),
+            OBJ('foo.bar', 'search', [('name', '=', 'Morice')], 0, None, None, {'lang': 'fr_FR'}),
+            OBJ('foo.bar', 'fields_get_keys'),
+            OBJ('foo.bar', 'read', [1003], ['name'], {'lang': 'fr_FR'}),
+            OBJ('foo.bar', 'fields_get'),
+            OBJ('foo.bar', 'search', [('name', '=', 'Morice')], 0, None, None, ctx),
+            OBJ('foo.bar', 'read', [1003], ['name'], ctx),
         )
         self.assertOutput('')
 
@@ -409,6 +442,52 @@ class TestModel(TestCase):
         )
         self.assertOutput('')
 
+    def test_create_relation(self):
+        FooBar = self.model('foo.bar')
+
+        record42 = FooBar.browse(42)
+        recordlist42 = FooBar.browse([4, 2])
+        rec_null = FooBar.browse(False)
+
+        # one2many
+        FooBar.create({'line_ids': rec_null})
+        FooBar.create({'line_ids': []})
+        FooBar.create({'line_ids': [123, 234]})
+        FooBar.create({'line_ids': [(6, 0, [76])]})
+        FooBar.create({'line_ids': recordlist42})
+
+        # many2many
+        FooBar.create({'many_ids': None})
+        FooBar.create({'many_ids': []})
+        FooBar.create({'many_ids': [123, 234]})
+        FooBar.create({'many_ids': [(6, 0, [76])]})
+        FooBar.create({'many_ids': recordlist42})
+
+        # many2one
+        FooBar.create({'misc_id': False})
+        FooBar.create({'misc_id': 123})
+        FooBar.create({'misc_id': record42})
+
+        self.assertCalls(
+            OBJ('foo.bar', 'fields_get'),
+            OBJ('foo.bar', 'create', {'line_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'create', {'line_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'create', {'line_ids': [(6, 0, [123, 234])]}),
+            OBJ('foo.bar', 'create', {'line_ids': [(6, 0, [76])]}),
+            OBJ('foo.bar', 'create', {'line_ids': [(6, 0, [4, 2])]}),
+
+            OBJ('foo.bar', 'create', {'many_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'create', {'many_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'create', {'many_ids': [(6, 0, [123, 234])]}),
+            OBJ('foo.bar', 'create', {'many_ids': [(6, 0, [76])]}),
+            OBJ('foo.bar', 'create', {'many_ids': [(6, 0, [4, 2])]}),
+
+            OBJ('foo.bar', 'create', {'misc_id': False}),
+            OBJ('foo.bar', 'create', {'misc_id': 123}),
+            OBJ('foo.bar', 'create', {'misc_id': 42}),
+        )
+        self.assertOutput('')
+
     def test_method(self, method_name='method', single_id=True):
         FooBar = self.model('foo.bar')
         FooBar_method = getattr(FooBar, method_name)
@@ -435,6 +514,21 @@ class TestModel(TestCase):
 
         self.test_method('perm_read', single_id=False)
 
+    def test_get_external_ids(self):
+        FooBar = self.model('foo.bar')
+
+        self.assertEqual(FooBar._get_external_ids(), {'this_module.xml_name': FooBar.get(42)})
+        FooBar._get_external_ids([])
+        FooBar._get_external_ids([2001, 2002])
+        self.assertCalls(
+            OBJ('ir.model.data', 'search', [('model', '=', 'foo.bar')]),
+            OBJ('ir.model.data', 'read', sentinel.FOO, ['module', 'name', 'res_id']),
+            OBJ('ir.model.data', 'search', [('model', '=', 'foo.bar'), ('res_id', 'in', [])]),
+            OBJ('ir.model.data', 'search', [('model', '=', 'foo.bar'), ('res_id', 'in', [2001, 2002])]),
+            OBJ('ir.model.data', 'read', sentinel.FOO, ['module', 'name', 'res_id']),
+        )
+        self.assertOutput('')
+
 
 class TestRecord(TestCase):
     """Tests the Model class and methods."""
@@ -442,9 +536,11 @@ class TestRecord(TestCase):
     def test_read(self):
         records = self.model('foo.bar').browse([13, 17])
         rec = self.model('foo.bar').browse(42)
+        rec_null = self.model('foo.bar').browse(False)
 
         self.assertIsInstance(records, erppeek.RecordList)
         self.assertIsInstance(rec, erppeek.Record)
+        self.assertIsInstance(rec_null, erppeek.Record)
 
         rec.read()
         records.read()
@@ -454,12 +550,12 @@ class TestRecord(TestCase):
         records.read('birthdate city')
 
         self.assertCalls(
-            OBJ('foo.bar', 'read', 42, None),
-            OBJ('foo.bar', 'read', [13, 17], None),
-            OBJ('foo.bar', 'read', 42, ['message']),
+            OBJ('foo.bar', 'read', [42], None),
             OBJ('foo.bar', 'fields_get'),
+            OBJ('foo.bar', 'read', [13, 17], None),
+            OBJ('foo.bar', 'read', [42], ['message']),
             OBJ('foo.bar', 'read', [13, 17], ['message']),
-            OBJ('foo.bar', 'read', 42, ['name', 'message']),
+            OBJ('foo.bar', 'read', [42], ['name', 'message']),
             OBJ('foo.bar', 'read', [13, 17], ['birthdate', 'city']),
         )
         self.assertOutput('')
@@ -489,13 +585,101 @@ class TestRecord(TestCase):
         )
         self.assertOutput('')
 
+    def test_write_relation(self):
+        records = self.model('foo.bar').browse([13, 17])
+        rec = self.model('foo.bar').browse(42)
+        rec_null = self.model('foo.bar').browse(False)
+
+        # one2many
+        rec.write({'line_ids': False})
+        rec.write({'line_ids': []})
+        rec.write({'line_ids': [123, 234]})
+        rec.write({'line_ids': [(6, 0, [76])]})
+        rec.write({'line_ids': records})
+
+        # many2many
+        rec.write({'many_ids': None})
+        rec.write({'many_ids': []})
+        rec.write({'many_ids': [123, 234]})
+        rec.write({'many_ids': [(6, 0, [76])]})
+        rec.write({'many_ids': records})
+
+        # many2one
+        rec.write({'misc_id': False})
+        rec.write({'misc_id': 123})
+        rec.write({'misc_id': rec})
+
+        # one2many
+        records.write({'line_ids': None})
+        records.write({'line_ids': []})
+        records.write({'line_ids': [123, 234]})
+        records.write({'line_ids': [(6, 0, [76])]})
+        records.write({'line_ids': records})
+
+        # many2many
+        records.write({'many_ids': 0})
+        records.write({'many_ids': []})
+        records.write({'many_ids': [123, 234]})
+        records.write({'many_ids': [(6, 0, [76])]})
+        records.write({'many_ids': records})
+
+        # many2one
+        records.write({'misc_id': rec_null})
+        records.write({'misc_id': 123})
+        records.write({'misc_id': rec})
+
+        self.assertCalls(
+            OBJ('foo.bar', 'fields_get'),
+
+            OBJ('foo.bar', 'write', [42], {'line_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [42], {'line_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [42], {'line_ids': [(6, 0, [123, 234])]}),
+            OBJ('foo.bar', 'write', [42], {'line_ids': [(6, 0, [76])]}),
+            OBJ('foo.bar', 'write', [42], {'line_ids': [(6, 0, [13, 17])]}),
+
+            OBJ('foo.bar', 'write', [42], {'many_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [42], {'many_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [42], {'many_ids': [(6, 0, [123, 234])]}),
+            OBJ('foo.bar', 'write', [42], {'many_ids': [(6, 0, [76])]}),
+            OBJ('foo.bar', 'write', [42], {'many_ids': [(6, 0, [13, 17])]}),
+
+            OBJ('foo.bar', 'write', [42], {'misc_id': False}),
+            OBJ('foo.bar', 'write', [42], {'misc_id': 123}),
+            OBJ('foo.bar', 'write', [42], {'misc_id': 42}),
+
+            OBJ('foo.bar', 'write', [13, 17], {'line_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'line_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'line_ids': [(6, 0, [123, 234])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'line_ids': [(6, 0, [76])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'line_ids': [(6, 0, [13, 17])]}),
+
+            OBJ('foo.bar', 'write', [13, 17], {'many_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'many_ids': [(6, 0, [])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'many_ids': [(6, 0, [123, 234])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'many_ids': [(6, 0, [76])]}),
+            OBJ('foo.bar', 'write', [13, 17], {'many_ids': [(6, 0, [13, 17])]}),
+
+            OBJ('foo.bar', 'write', [13, 17], {'misc_id': False}),
+            OBJ('foo.bar', 'write', [13, 17], {'misc_id': 123}),
+            OBJ('foo.bar', 'write', [13, 17], {'misc_id': 42}),
+        )
+
+        self.assertRaises(TypeError, rec.write, {'line_ids': 123})
+        self.assertRaises(TypeError, records.write, {'line_ids': 123})
+        self.assertRaises(TypeError, records.write, {'line_ids': rec})
+        self.assertRaises(TypeError, rec.write, {'many_ids': 123})
+        self.assertRaises(TypeError, records.write, {'many_ids': rec})
+
+        self.assertCalls()
+        self.assertOutput('')
+
     def test_copy(self):
         rec = self.model('foo.bar').browse(42)
         records = self.model('foo.bar').browse([13, 17])
 
         recopy = rec.copy()
         self.assertIsInstance(recopy, erppeek.Record)
-        self.assertEqual(recopy.id, sentinel.OTHER)
+        self.assertEqual(recopy.id, 1999)
 
         rec.copy({'spam': 42})
         rec.copy({'spam': rec})
@@ -576,6 +760,10 @@ class TestRecord(TestCase):
         self.assertEqual(rec.id, 42)
         self.assertEqual(records.id, [13, 17])
 
+        # if the attribute is not a field, it could be a specific RPC method
+        self.assertEqual(rec.missingattr(), sentinel.OTHER)
+        self.assertEqual(records.missingattr(), [sentinel.OTHER])
+
         # existing fields can be read as attributes
         # attribute is writable on the Record object only
         self.assertFalse(callable(rec.message))
@@ -583,19 +771,15 @@ class TestRecord(TestCase):
         self.assertFalse(callable(rec.message))
         self.assertEqual(records.message, ['v_message', 'v_message'])
 
-        # if the attribute is not a field, it could be a specific RPC method
-        self.assertEqual(rec.missingattr(), sentinel.OTHER)
-        self.assertEqual(records.missingattr(), [sentinel.OTHER])
-
         self.assertCalls(
             OBJ('foo.bar', 'fields_get_keys'),
-            OBJ('foo.bar', 'read', 42, ['message']),
-            OBJ('foo.bar', 'fields_get'),
-            OBJ('foo.bar', 'write', [42], {'message': 'one giant leap for mankind'}),
-            OBJ('foo.bar', 'read', 42, ['message']),
-            OBJ('foo.bar', 'read', [13, 17], ['message']),
             OBJ('foo.bar', 'missingattr', [42]),
             OBJ('foo.bar', 'missingattr', [13, 17]),
+            OBJ('foo.bar', 'read', [42], ['message']),
+            OBJ('foo.bar', 'fields_get'),
+            OBJ('foo.bar', 'write', [42], {'message': 'one giant leap for mankind'}),
+            OBJ('foo.bar', 'read', [42], ['message']),
+            OBJ('foo.bar', 'read', [13, 17], ['message']),
         )
 
         # attribute "id" is never writable
@@ -618,4 +802,174 @@ class TestRecord(TestCase):
         self.assertRaises(AttributeError, delattr, records, 'missingattr2')
 
         self.assertCalls()
+        self.assertOutput('')
+
+    def test_equal(self):
+        rec1 = self.model('foo.bar').get(42)
+        rec2 = self.model('foo.bar').get(42)
+        rec3 = self.model('foo.bar').get(2)
+        rec4 = self.model('foo.other').get(42)
+        records = self.model('foo.bar').browse([42])
+
+        self.assertEqual(rec1.id, rec2.id)
+        self.assertEqual(rec1, rec2)
+
+        self.assertNotEqual(rec1.id, rec3.id)
+        self.assertEqual(rec1.id, rec4.id)
+        self.assertNotEqual(rec1, rec3)
+        self.assertNotEqual(rec1, rec4)
+
+        self.assertEqual(records.id, [42])
+        self.assertNotEqual(rec1, records)
+
+        # if client is different, records do not compare equal
+        rec2.__dict__['_model'] = sentinel.OTHER_MODEL
+        self.assertNotEqual(rec1, rec2)
+
+        self.assertCalls()
+        self.assertOutput('')
+
+    def test_add(self):
+        records1 = self.model('foo.bar').browse([42])
+        records2 = self.model('foo.bar').browse([42])
+        records3 = self.model('foo.bar').browse([13, 17])
+        records4 = self.model('foo.other').browse([4])
+        rec1 = self.model('foo.bar').get(42)
+
+        sum1 = records1 + records2
+        sum2 = records1 + records3
+        sum3 = records3
+        sum3 += records1
+        self.assertIsInstance(sum1, erppeek.RecordList)
+        self.assertIsInstance(sum2, erppeek.RecordList)
+        self.assertIsInstance(sum3, erppeek.RecordList)
+        self.assertEqual(sum1.id, [42, 42])
+        self.assertEqual(sum2.id, [42, 13, 17])
+        self.assertEqual(sum3.id, [13, 17, 42])
+        self.assertEqual(records3.id, [13, 17])
+
+        with self.assertRaises(AssertionError):
+            records1 + records4
+        with self.assertRaises(AttributeError):
+            records1 + rec1
+        with self.assertRaises(AttributeError):
+            records1 + [rec1]
+        with self.assertRaises(TypeError):
+            rec1 + rec1
+
+        self.assertCalls(OBJ('foo.bar', 'fields_get_keys'))
+        self.assertOutput('')
+
+    def test_read_duplicate(self):
+        records = self.model('foo.bar').browse([17, 17])
+
+        self.assertEqual(type(records), erppeek.RecordList)
+
+        values = records.read()
+        self.assertEqual(len(values), 2)
+        self.assertEqual(*values)
+        self.assertEqual(type(values[0]['misc_id']), erppeek.Record)
+
+        values = records.read('message')
+        self.assertEqual(values, ['v_message', 'v_message'])
+
+        values = records.read('birthdate city')
+        self.assertEqual(len(values), 2)
+        self.assertEqual(*values)
+        self.assertEqual(values[0], {'id': 17, 'city': 'v_city',
+                                     'birthdate': 'v_birthdate'})
+
+        self.assertCalls(
+            OBJ('foo.bar', 'read', [17], None),
+            OBJ('foo.bar', 'fields_get'),
+            OBJ('foo.bar', 'read', [17], ['message']),
+            OBJ('foo.bar', 'read', [17], ['birthdate', 'city']),
+        )
+        self.assertOutput('')
+
+    def test_str(self):
+        records = erppeek.RecordList(self.model('foo.bar'), [(13, 'treize'), (17, 'dix-sept')])
+        rec1 = self.model('foo.bar').browse(42)
+        rec2 = records[0]
+        rec3 = self.model('foo.bar').browse(404)
+
+        self.assertEqual(str(rec1), 'name_42')
+        self.assertEqual(str(rec2), 'treize')
+        self.assertEqual(rec1._name, 'name_42')
+        self.assertEqual(rec2._name, 'treize')
+
+        # Broken name_get
+        self.assertEqual(str(rec3), 'foo.bar,404')
+
+        self.assertCalls(
+            OBJ('foo.bar', 'fields_get_keys'),
+            OBJ('foo.bar', 'name_get', [42]),
+            OBJ('foo.bar', 'name_get', [404]),
+        )
+
+        # This str() is never updated (for performance reason).
+        rec1.refresh()
+        rec2.refresh()
+        rec3.refresh()
+        self.assertEqual(str(rec1), 'name_42')
+        self.assertEqual(str(rec2), 'treize')
+        self.assertEqual(str(rec3), 'foo.bar,404')
+
+        self.assertCalls()
+        self.assertOutput('')
+
+    def test_external_id(self):
+        records = self.model('foo.bar').browse([13, 17])
+        rec = self.model('foo.bar').browse(42)
+        rec3 = self.model('foo.bar').browse([17, 13, 42])
+
+        self.assertEqual(rec._external_id, 'this_module.xml_name')
+        self.assertEqual(records._external_id, [False, False])
+        self.assertEqual(rec3._external_id, [False, False, 'this_module.xml_name'])
+
+        self.assertCalls(
+            OBJ('ir.model.data', 'search', [('model', '=', 'foo.bar'), ('res_id', 'in', [42])]),
+            OBJ('ir.model.data', 'read', sentinel.FOO, ['module', 'name', 'res_id']),
+            OBJ('ir.model.data', 'search', [('model', '=', 'foo.bar'), ('res_id', 'in', [13, 17])]),
+            OBJ('ir.model.data', 'read', sentinel.FOO, ['module', 'name', 'res_id']),
+            OBJ('ir.model.data', 'search', [('model', '=', 'foo.bar'), ('res_id', 'in', [17, 13, 42])]),
+            OBJ('ir.model.data', 'read', sentinel.FOO, ['module', 'name', 'res_id']),
+        )
+        self.assertOutput('')
+
+    def test_set_external_id(self):
+        records = self.model('foo.bar').browse([13, 17])
+        rec = self.model('foo.bar').browse(42)
+        rec3 = self.model('foo.bar').browse([17, 13, 42])
+
+        # Assign an External ID on a record which does not have one
+        records[0]._external_id = 'other_module.dummy'
+        xml_domain = ['|', '&', ('model', '=', 'foo.bar'), ('res_id', '=', 13),
+                      '&', ('module', '=', 'other_module'), ('name', '=', 'dummy')]
+        imd_values = {'model': 'foo.bar', 'name': 'dummy',
+                      'res_id': 13, 'module': 'other_module'}
+        self.assertCalls(
+            OBJ('ir.model.data', 'search', xml_domain),
+            OBJ('ir.model.data', 'fields_get'),
+            OBJ('ir.model.data', 'create', imd_values),
+        )
+
+        # Cannot assign an External ID if there's already one
+        self.assertRaises(ValueError, setattr, rec, '_external_id', 'ab.cdef')
+        # Cannot assign an External ID to a RecordList
+        self.assertRaises(AttributeError, setattr, rec3, '_external_id', 'ab.cdef')
+
+        # Reject invalid External IDs
+        self.assertRaises(ValueError, setattr, records[1], '_external_id', '')
+        self.assertRaises(ValueError, setattr, records[1], '_external_id', 'ab')
+        self.assertRaises(ValueError, setattr, records[1], '_external_id', 'ab.cd.ef')
+        self.assertRaises(AttributeError, setattr, records[1], '_external_id', False)
+        records[1]._external_id = 'other_module.dummy'
+
+        self.assertCalls(
+            OBJ('ir.model.data', 'search', ANY),
+            OBJ('foo.bar', 'fields_get_keys'),
+            OBJ('ir.model.data', 'search', ANY),
+            OBJ('ir.model.data', 'create', ANY),
+        )
         self.assertOutput('')

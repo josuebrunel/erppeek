@@ -8,10 +8,10 @@ Developer's notes
 Source code
 -----------
 
-* `Source code <https://github.com/florentx/erppeek>`_ and
-  `issue tracker <https://github.com/florentx/erppeek/issues>`_ on GitHub.
-* `Continuous tests <http://travis-ci.org/florentx/erppeek>`_ against Python
-  2.5 through 3.3 and PyPy, on `Travis-CI platform
+* `Source code <https://github.com/tinyerp/erppeek>`_ and
+  `issue tracker <https://github.com/tinyerp/erppeek/issues>`_ on GitHub.
+* `Continuous tests <http://travis-ci.org/tinyerp/erppeek>`_ against Python
+  2.6 through 3.4 and PyPy, on `Travis-CI platform
   <http://about.travis-ci.org/>`_.
 
 
@@ -28,7 +28,7 @@ For example:
 * write BDD tests using the `Gherkin language <http://packages.python.org/
   behave/gherkin.html#gherkin-feature-testing-language>`_, and a library
   like `Behave <http://packages.python.org/behave/>`_.
-* build an interface for OpenERP, using a framework like
+* build an interface for Odoo, using a framework like
   `Flask <http://flask.pocoo.org/>`_ (HTML, JSON, SOAP, ...).
 
 
